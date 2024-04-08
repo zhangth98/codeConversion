@@ -1,2 +1,2 @@
 # codeConversion
-converts t-sql to Databricks notebooks/functions
+converts t-sql stored procedure to Databricks notebooks/functions
