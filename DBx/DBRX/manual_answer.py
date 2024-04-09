@@ -8,7 +8,6 @@ def get_transformation_func_mapping_arrays(config_id: int, return_length: int) -
     #Fetch config table, initial repace i0 column, and normalize transformation function data types
     df = (spark.read.table("data_management.cfg.vw_raw_to_curated_column_mapping")
         .where(f"config_id == {config_id} and active_ind == 1")
-        .withColumn("transformation_function_def", replace(col("transformation_function_def"),lit('i0'), col("source_column_name")))
         .withColumn("transform_func_data_type", initcap("transform_func_data_type"))
         .withColumn("transform_func_data_type", when(col('transform_func_data_type').isin(['Numeric','Bit','Decimal','Integer']),'Numeric')
                                 .when(col('transform_func_data_type').isin(['Timestamp','Datetime']), 'Timestamp')
