@@ -5,7 +5,7 @@ import re
 
 def get_transformation_func_mapping_arrays(config_id: int, return_length: int) -> dict:
     spark = SparkSession.builder.getOrCreate()
-
+    #Fetch config table, initial repace i0 column, and normalize transformation function data types
     df = (spark.read.table("data_management.cfg.vw_raw_to_curated_column_mapping")
         .where(f"config_id == {config_id} and active_ind == 1")
         .withColumn("transformation_function_def", replace(col("transformation_function_def"),lit('i0'), col("source_column_name")))
@@ -15,20 +15,21 @@ def get_transformation_func_mapping_arrays(config_id: int, return_length: int) -
                                 .otherwise(col('transform_func_data_type')))
     )
 
+    #get source column list
     raw_columns = (df.where("derived_ind=0 or (derived_ind=1 and transformation_function_id is null)") 
                     .select("source_column_name")
                     ).distinct().orderBy("source_column_name").rdd.flatMap(lambda x: x).collect()
 
+    # get derived source column list
     derived_raw_columns = (df.where("derived_ind == 1 and transformation_function_id is not null")        
                     .select(concat(lit("cast(null as varchar) as "), col("source_column_name")).alias("source_column_name")) 
                     ).distinct().orderBy("source_column_name").rdd.flatMap(lambda x: x).collect()
 
+    #get fully qualified source table name
     full_source_table_name=df.select(concat(col('source_database_name'),lit('.'),col('source_schema_name'),lit('.'),col('source_table_name'))).distinct().collect()[0][0]
 
+    #format the source_query
     source_query='select ' + ', '.join((raw_columns + derived_raw_columns)) + ' from ' + full_source_table_name + " WHERE AUDIT_ACTIVE_ROW_IND='Y'"
-
-    bkeys,bvals,dkeys,dvals, dtkeys, dtvals, nkeys, nvals, skeys,svals = "","","","","","","","","",""
-    b_count, d_count,dt_count,n_count,s_count = 0,0,0,0,0   
 
     # Initialize lists to store data types, keys, and values
     d_types, f_keys, f_vals = [], [], []
