@@ -9,6 +9,10 @@ def get_transformation_func_mapping_arrays(config_id: int, return_length: int) -
     df = (spark.read.table("data_management.cfg.vw_raw_to_curated_column_mapping")
         .where(f"config_id == {config_id} and active_ind == 1")
         .withColumn("transformation_function_def", replace(col("transformation_function_def"),lit('i0'), col("source_column_name")))
+        .withColumn("transform_func_data_type", initcap("transform_func_data_type"))
+        .withColumn("transform_func_data_type", when(col('transform_func_data_type').isin(['Numeric','Bit','Decimal','Integer']),'Numeric')
+                                .when(col('transform_func_data_type').isin(['Timestamp','Datetime']), 'Timestamp')
+                                .otherwise(col('transform_func_data_type')))
     )
 
     raw_columns = (df.where("derived_ind=0 or (derived_ind=1 and transformation_function_id is null)") 
@@ -26,47 +30,55 @@ def get_transformation_func_mapping_arrays(config_id: int, return_length: int) -
     bkeys,bvals,dkeys,dvals, dtkeys, dtvals, nkeys, nvals, skeys,svals = "","","","","","","","","",""
     b_count, d_count,dt_count,n_count,s_count = 0,0,0,0,0   
 
-    d_types, f_keys, f_vals=[],[],[]
+    # Initialize lists to store data types, keys, and values
+    d_types, f_keys, f_vals = [], [], []
 
+    # Iterate over DataFrame rows
+    for row in df.filter("transformation_function_id is not null").collect():
+        # Replace placeholders with actual values in the transformation function definition
+        f_def = row["transformation_function_def"].replace('i0', row["source_column_name"])
+        parameter_list = row["transformation_parameter_text"]
+        
+        # Iterate over parameters and replace placeholders in the function definition
+        for i, p in enumerate(parameter_list.split('|')):
+            f_def = f_def.replace('i' + str(i + 1), p)
+        
+        # Append key, value, and data type to respective lists
+        f_keys.append(row["target_column_name"])
+        f_vals.append(f_def)
+        d_types.append(row["transform_func_data_type"])            
+
+    # Extract necessary information from DataFrame
+    f_trans = {}
     for row in df.where("transformation_function_id is not null").collect():
-        f_def=re.sub('i0', row["source_column_name"], row["transformation_function_def"])
-        target_column=row["target_column_name"]
-        p_type = row["transform_func_data_type"]
-        parameter_list=row["transformation_parameter_text"]
-        for p in enumerate(parameter_list.split('|')):
-            f_def=re.sub('i'+ str(p[0]+1), p[1], f_def)
-        d_types += [p_type]
-        f_keys += [target_column]
-        f_vals += [f_def]
+        f_def = row["transformation_function_def"]
+        for i, p in enumerate(row["transformation_parameter_text"].split('|')):
+            f_def = re.sub('i' + str(i + 1), p, f_def)
+        f_trans[(row["target_column_name"], row["transform_func_data_type"])] = f_def
 
-    f_trans=dict(zip(d_types, zip(f_keys, f_vals)))
+    # Group transformations by data type
+    transformations = {"Boolean": [], "Date": [], "Timestamp": [], "Numeric": [], "String": []}
+    for (target_column, data_type), f_def in f_trans.items():
+        data_type = data_type.capitalize()
+        transformations[data_type].append((target_column, f_def))
 
-    b_keys=[f_trans[k][0] for k in f_trans.keys() if k.capitalize()=='Boolean']
-    b_vals=[f_trans[k][1] for k in f_trans.keys() if k.capitalize()=='Boolean']
-    d_keys=[f_trans[k][0] for k in f_trans.keys() if k.capitalize()=='Date']
-    d_vals=[f_trans[k][1] for k in f_trans.keys() if k.capitalize()=='Date']
-    dt_keys=[f_trans[k][0] for k in f_trans.keys() if k.capitalize() in ('Timestamp','Datetime')]
-    dt_vals=[f_trans[k][1] for k in f_trans.keys() if k.capitalize() in ('Timestamp','Datetime')]
-    n_keys=[f_trans[k][0] for k in f_trans.keys() if k.capitalize() in ("Numeric", "Decimal", "Integer", "Bit")]
-    n_vals=[f_trans[k][1] for k in f_trans.keys() if k.capitalize() in ("Numeric", "Decimal", "Integer", "Bit")]
-    s_keys=[f_trans[k][0] for k in f_trans.keys() if k.capitalize()=='String']
-    s_vals=[f_trans[k][1] for k in f_trans.keys() if k.capitalize()=='String']
+    # Fill missing transformations with null placeholder
+    for data_type, transform_list in transformations.items():
+        null_placeholder = {"Boolean": "toBoolean(null())", 
+                            "Date": "toDate(null())", 
+                            "Timestamp": "toTimestamp(null())", 
+                            "Numeric": "toDecimal(null())", 
+                            "String": "toString(null())"}[data_type]
+        transform_list.extend([("_" + data_type[0].lower() + str(i + 1), null_placeholder) for i in range(len(transform_list), return_length)])
 
-    b_keys += [f"_b{i+1}" for i in range(len(b_keys), return_length)]
-    b_vals += ["toBoolean(null())" for i in range(len(b_vals), return_length)]
+    # Unpack transformations for each data type
+    b_keys, b_vals = zip(*transformations["Boolean"])
+    d_keys, d_vals = zip(*transformations["Date"])
+    dt_keys, dt_vals = zip(*transformations["Timestamp"])
+    n_keys, n_vals = zip(*transformations["Numeric"])
+    s_keys, s_vals = zip(*transformations["String"])
 
-    d_keys += [f"_d{i+1}" for i in range(len(d_keys), return_length)]
-    d_vals += ["toDate(null())" for i in range(len(d_vals), return_length)]
-
-    dt_keys += [f"_dt{i+1}" for i in range(len(dt_keys), return_length)]
-    dt_vals += ["toTimestamp(null())" for i in range(len(dt_vals), return_length)]
-
-    n_keys += [f"_n{i+1}" for i in range(len(n_keys), return_length)]
-    n_vals += ["toDecimal(null())" for i in range(len(n_vals), return_length)]
-
-    s_keys += [f"_s{i+1}" for i in range(len(s_keys), return_length)]
-    s_vals += ["toString(null())" for i in range(len(s_vals), return_length)]
-
+    # Convert to string and return as a dict
     return {"source_query":source_query,
             "bkeys":';'.join(b_keys), 
             "bvals":';'.join(b_vals), 
@@ -82,7 +94,3 @@ def get_transformation_func_mapping_arrays(config_id: int, return_length: int) -
 # COMMAND ----------
 
 get_transformation_func_mapping_arrays(672,40)
-
-# COMMAND ----------
-
-
