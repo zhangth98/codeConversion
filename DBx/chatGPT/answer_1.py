@@ -145,4 +145,3 @@ print(sql_stmt)
 
 # COMMAND ----------
 
-

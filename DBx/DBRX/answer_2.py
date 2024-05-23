@@ -265,4 +265,3 @@ def remove_semicolon(*args):
 
 # COMMAND ----------
 
-

@@ -163,4 +163,3 @@ get_transformation_func_mapping_arrays(672, 40)
 
 # COMMAND ----------
 
-

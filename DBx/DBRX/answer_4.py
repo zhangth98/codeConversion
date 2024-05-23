@@ -219,4 +219,3 @@ def get_transformation_func_mapping_arrays(config_id, return_length=8):
 
 # COMMAND ----------
 
-
